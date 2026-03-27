@@ -1,26 +1,45 @@
 # Media Library
 
-Simple web application that list images and videos from a directory.
-- User can add new media by clicking the "Add Media" button and selecting a file from their device.
-- The application supports common image formats (e.g., JPEG, PNG) and video formats (e.g., MP4, AVI).
-- The media files are displayed in a grid layout, showing thumbnails.
-- Users can click on a thumbnail to view the media details: 
-    * file name
-    * file size
-    * description
-    * tags
-- media files are stored in a local directory on the server, and their metadata is saved in a SQLite database.
+A self-hosted web app for browsing, describing, and running AI object detection on your images and videos.
 
-- description and tags are obtained using AI. It's OpenAI compatible API.
-- On a different page, users can save connections to the API: URL, API key, and model name. These connections are stored in the database. 
-- the active connection can be selected from a dropdown menu when adding media. The application will use the selected connection to obtain the description and tags for the media file.
+> **AI service**: any OpenAI-compatible API (local or cloud) — bring your own endpoint, key, and model.
 
-- The application runs in a docker container, and the media files are stored in a volume that is mounted to the container. This allows the media files to persist even if the container is stopped or removed.
-- a docker-compose file is provided to easily set up the application
+## Run
 
-## Technologies Used
+```bash
+docker compose up
+```
 
-- .NET 10 
-- Blazor server
-- SQLite
-- Docker
+or if you have .NET 10 installed:
+
+```bash
+dotnet run --project src/MediaLibrary
+```
+
+
+Open [http://localhost:8080](http://localhost:8080).
+Media files and the database are persisted in a named volume (`media-data`) so they survive container restarts.
+
+## How it works
+
+See [docs/how-it-works.md](docs/how-it-works.md) for a full walkthrough of the app.
+
+## Technologies
+
+- .NET 10 / Blazor Server
+- MudBlazor
+- SQLite + Dapper
+- FFmpeg (video thumbnails)
+- Podman / Docker
+
+## Contributing
+
+1. Fork the repo and create a feature branch.
+2. Keep changes focused — one concern per PR.
+3. Open a pull request with a short description of what and why.
+
+Issues and feedback are welcome.
+
+## License
+
+[MIT](LICENSE)

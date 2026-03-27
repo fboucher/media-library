@@ -1,0 +1,39 @@
+.media-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px;
+}
+
+.media-grid-item {
+    width: 140px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    border-radius: 6px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+}
+
+.media-grid-item:hover {
+    border-color: var(--mud-palette-primary-lighten);
+}
+
+.media-grid-item.selected {
+    border-color: var(--mud-palette-primary);
+}
+
+.media-grid-item img {
+    width: 140px;
+    height: 100px;
+    object-fit: cover;
+    display: block;
+}
+
+.media-grid-label {
+    font-size: 11px;
+    padding: 4px 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: rgba(0,0,0,0.04);
+}

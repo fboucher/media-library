@@ -1,0 +1,18 @@
+@using MediaLibrary.Models
+
+<div class="media-grid">
+    @foreach (var item in Items)
+    {
+        <div class="media-grid-item @(SelectedId == item.Id ? "selected" : "")"
+             @onclick="() => OnSelect.InvokeAsync(item)">
+            <img src="@item.ThumbnailUrl" alt="@item.FileName" loading="lazy" />
+            <div class="media-grid-label">@item.FileName</div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IEnumerable<MediaItem> Items { get; set; } = [];
+    [Parameter] public int? SelectedId { get; set; }
+    [Parameter] public EventCallback<MediaItem> OnSelect { get; set; }
+}

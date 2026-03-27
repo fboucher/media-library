@@ -1,0 +1,137 @@
+@using MediaLibrary.Data
+@using MediaLibrary.Models
+@using MediaLibrary.Services
+@inject MediaRepository MediaRepo
+@inject AiService AiService
+@inject AppState AppState
+@inject ISnackbar Snackbar
+@inject IConfiguration Config
+
+@if (Item is not null)
+{
+    <MudPaper Class="pa-0" Elevation="0">
+
+        <img src="@Item.ThumbnailUrl" alt="@Item.FileName"
+             style="width:100%;max-height:240px;object-fit:contain;border-radius:4px;margin-bottom:16px;background:#f5f5f5" />
+
+        <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-1">File name</MudText>
+        <MudText Typo="Typo.body1" Class="mb-3" Style="word-break:break-all">@Item.FileName</MudText>
+
+        <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-1">File size</MudText>
+        <MudText Typo="Typo.body1" Class="mb-3">@Item.FileSizeDisplay</MudText>
+
+        <MudTextField @bind-Value="_description"
+                      Label="Description"
+                      Lines="5"
+                      Variant="Variant.Outlined"
+                      Class="mb-3" />
+
+        @if (_aiError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-2" Dense="true">@_aiError</MudAlert>
+        }
+
+        <MudStack Row="true" Spacing="2" Class="mb-2">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       OnClick="SaveAsync">
+                Save
+            </MudButton>
+
+            <MudButton Variant="Variant.Outlined"
+                       Color="Color.Secondary"
+                       OnClick="FillWithAiAsync"
+                       Disabled="@(AppState.ActiveConnection is null || _aiLoading)">
+                @(_aiLoading ? "Analyzing…" : "Fill with AI")
+            </MudButton>
+        </MudStack>
+
+        @if (_confirmingDelete)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-2">
+                <MudText>Delete "@Item?.FileName"? This cannot be undone.</MudText>
+                <MudStack Row="true" Spacing="1" Class="mt-2">
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Error" OnClick="DeleteAsync">Yes, delete</MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="() => _confirmingDelete = false">Cancel</MudButton>
+                </MudStack>
+            </MudAlert>
+        }
+        else
+        {
+            <MudButton Variant="Variant.Text"
+                       Color="Color.Error"
+                       StartIcon="@Icons.Material.Filled.Delete"
+                       OnClick="() => _confirmingDelete = true">
+                Delete
+            </MudButton>
+        }
+
+    </MudPaper>
+}
+
+@code {
+    [Parameter, EditorRequired] public MediaItem? Item { get; set; }
+    [Parameter] public EventCallback<MediaItem> OnSaved { get; set; }
+    [Parameter] public EventCallback<MediaItem> OnDeleted { get; set; }
+
+    private string _description = "";
+    private bool _confirmingDelete;
+    private bool _aiLoading;
+    private string? _aiError;
+
+    protected override void OnParametersSet()
+    {
+        _description      = Item?.Description ?? "";
+        _confirmingDelete = false;
+        _aiError          = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (Item is null) return;
+        await MediaRepo.UpdateDescriptionAsync(Item.Id, _description);
+        Item.Description = _description;
+        Snackbar.Add("Saved.", Severity.Success);
+        await OnSaved.InvokeAsync(Item);
+    }
+
+    private async Task FillWithAiAsync()
+    {
+        if (Item is null || AppState.ActiveConnection is null) return;
+
+        _aiLoading = true;
+        _aiError   = null;
+
+        try
+        {
+            _description = await AiService.AnalyzeAsync(
+                AppState.ActiveConnection, AppState.Prompt, Item);
+        }
+        catch (Exception ex)
+        {
+            _aiError = ex.Message;
+        }
+        finally
+        {
+            _aiLoading = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (Item is null) return;
+
+        var mediaRoot = Config["Media:StoragePath"] ?? "/data/media";
+
+        var filePath = Path.Combine(mediaRoot, Item.FileName);
+        if (File.Exists(filePath))
+            File.Delete(filePath);
+
+        if (Item.ThumbnailPath is not null && File.Exists(Item.ThumbnailPath))
+            File.Delete(Item.ThumbnailPath);
+
+        await MediaRepo.DeleteAsync(Item.Id);
+        Snackbar.Add("Deleted.", Severity.Info);
+        await OnDeleted.InvokeAsync(Item);
+    }
+}

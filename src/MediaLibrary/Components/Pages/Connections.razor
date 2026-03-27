@@ -1,0 +1,219 @@
+@page "/connections"
+@rendermode InteractiveServer
+@using MediaLibrary.Data
+@using MediaLibrary.Models
+@inject ConnectionRepository ConnectionRepo
+@inject ISnackbar Snackbar
+@inject IHttpClientFactory HttpFactory
+
+<PageTitle>Connections</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="pa-4">
+
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h5" Style="flex:1">Connections</MudText>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="StartAdd">
+            Add Connection
+        </MudButton>
+        <MudButton Variant="Variant.Text"
+                   StartIcon="@Icons.Material.Filled.ArrowBack"
+                   Href="/">
+            Back
+        </MudButton>
+    </MudStack>
+
+    <!-- Connection list -->
+    @foreach (var c in _connections)
+    {
+        <MudPaper Class="pa-3 mb-2" Elevation="1">
+            <MudStack Row="true" AlignItems="AlignItems.Center">
+                <MudStack Style="flex:1" Spacing="0">
+                    <MudText Typo="Typo.subtitle1"><b>@c.Name</b></MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">@c.Url · @c.Model</MudText>
+                </MudStack>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                               Size="Size.Small"
+                               OnClick="() => StartEdit(c)" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                               Size="Size.Small"
+                               Color="Color.Error"
+                               OnClick="() => DeleteAsync(c)" />
+            </MudStack>
+        </MudPaper>
+    }
+
+    @if (_connections.Count == 0 && _form is null)
+    {
+        <MudText Color="Color.Secondary">No connections saved yet.</MudText>
+    }
+
+    <!-- Add / Edit form -->
+    @if (_form is not null)
+    {
+        <MudPaper Class="pa-4 mt-4" Elevation="2">
+            <MudText Typo="Typo.h6" Class="mb-3">@(_editId is null ? "Add Connection" : "Edit Connection")</MudText>
+
+            <MudTextField @bind-Value="_form.Name"
+                          Label="Name"
+                          Placeholder="Defaults to URL if blank"
+                          Variant="Variant.Outlined"
+                          Class="mb-3" />
+
+            <MudTextField @bind-Value="_form.Url"
+                          Label="URL"
+                          Variant="Variant.Outlined"
+                          Class="mb-3" />
+
+            <MudTextField @bind-Value="_form.ApiKey"
+                          Label="API Key"
+                          InputType="InputType.Password"
+                          Variant="Variant.Outlined"
+                          Class="mb-3" />
+
+            <MudTextField @bind-Value="_form.Model"
+                          Label="Model"
+                          Variant="Variant.Outlined"
+                          Class="mb-3" />
+
+            @if (_testResult is not null)
+            {
+                <MudAlert Severity="@_testSeverity" Class="mb-3">@_testResult</MudAlert>
+            }
+
+            <MudStack Row="true" Spacing="2">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           OnClick="SaveFormAsync">
+                    Save
+                </MudButton>
+                <MudButton Variant="Variant.Outlined"
+                           OnClick="() => TestAsync()"
+                           Disabled="_testing">
+                    @(_testing ? "Testing…" : "Test")
+                </MudButton>
+                <MudButton Variant="Variant.Text"
+                           OnClick="CancelForm">
+                    Cancel
+                </MudButton>
+            </MudStack>
+        </MudPaper>
+    }
+
+</MudContainer>
+
+@code {
+    private List<Connection> _connections = [];
+    private Connection? _form;
+    private int? _editId;
+    private bool _testing;
+    private string? _testResult;
+    private Severity _testSeverity = Severity.Info;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _connections = (await ConnectionRepo.GetAllAsync()).ToList();
+    }
+
+    private void StartAdd()
+    {
+        _editId = null;
+        _form = new Connection();
+        _testResult = null;
+    }
+
+    private void StartEdit(Connection c)
+    {
+        _editId = c.Id;
+        _form = new Connection { Id = c.Id, Name = c.Name, Url = c.Url, ApiKey = "", Model = c.Model };
+        _testResult = null;
+    }
+
+    private void CancelForm()
+    {
+        _form = null;
+        _testResult = null;
+    }
+
+    private async Task SaveFormAsync()
+    {
+        if (_form is null) return;
+
+        // Default name to URL when blank
+        if (string.IsNullOrWhiteSpace(_form.Name))
+            _form.Name = _form.Url;
+
+        if (_editId is null)
+        {
+            var id = await ConnectionRepo.InsertAsync(_form);
+            _form.Id = id;
+            _connections.Add(_form);
+            Snackbar.Add("Connection added.", Severity.Success);
+        }
+        else
+        {
+            // Preserve existing API key if the field was left blank
+            if (string.IsNullOrWhiteSpace(_form.ApiKey))
+            {
+                var existing = await ConnectionRepo.GetByIdAsync(_editId.Value);
+                if (existing is not null)
+                    _form.ApiKey = existing.ApiKey;
+            }
+
+            await ConnectionRepo.UpdateAsync(_form);
+            var idx = _connections.FindIndex(c => c.Id == _editId);
+            if (idx >= 0) _connections[idx] = _form;
+            Snackbar.Add("Connection updated.", Severity.Success);
+        }
+
+        _form = null;
+        _testResult = null;
+    }
+
+    private async Task DeleteAsync(Connection c)
+    {
+        await ConnectionRepo.DeleteAsync(c.Id);
+        _connections.Remove(c);
+        Snackbar.Add("Connection deleted.", Severity.Info);
+    }
+
+    private async Task TestAsync()
+    {
+        if (_form is null) return;
+        _testing = true;
+        _testResult = null;
+
+        try
+        {
+            var client = HttpFactory.CreateClient();
+            client.BaseAddress = new Uri(_form.Url.TrimEnd('/') + "/");
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _form.ApiKey);
+
+            var payload = new
+            {
+                model = _form.Model,
+                messages = new[] { new { role = "user", content = "Hi" } },
+                max_tokens = 1
+            };
+
+            var response = await client.PostAsJsonAsync("chat/completions", payload);
+
+            _testResult   = response.IsSuccessStatusCode
+                ? "Connection successful."
+                : $"Error {(int)response.StatusCode}: {response.ReasonPhrase}";
+            _testSeverity = response.IsSuccessStatusCode ? Severity.Success : Severity.Error;
+        }
+        catch (Exception ex)
+        {
+            _testResult   = $"Connection failed: {ex.Message}";
+            _testSeverity = Severity.Error;
+        }
+        finally
+        {
+            _testing = false;
+        }
+    }
+}

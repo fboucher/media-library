@@ -1,0 +1,75 @@
+@inherits LayoutComponentBase
+@inject ThemeService ThemeService
+@inject IJSRuntime JS
+@implements IDisposable
+
+<MudThemeProvider Theme="ThemeService.Theme" IsDarkMode="ThemeService.IsDarkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudMainContent Style="padding-top:0">
+        @Body
+    </MudMainContent>
+
+    <MudAppBar Bottom="true" Elevation="1" Dense="true">
+        <MudSpacer />
+        <MudSelect T="AppTheme"
+                   Value="ThemeService.Current"
+                   ValueChanged="OnThemeChanged"
+                   Variant="Variant.Outlined"
+                   Margin="Margin.Dense"
+                   Style="min-width:160px;margin-right:8px"
+                   Class="my-1">
+            <MudSelectItem Value="AppTheme.Light">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudIcon Icon="@Icons.Material.Outlined.LightMode" Size="Size.Small" />
+                    <span>Light</span>
+                </MudStack>
+            </MudSelectItem>
+            <MudSelectItem Value="AppTheme.Dark">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudIcon Icon="@Icons.Material.Outlined.DarkMode" Size="Size.Small" />
+                    <span>Dark</span>
+                </MudStack>
+            </MudSelectItem>
+            <MudSelectItem Value="AppTheme.TokyoNight">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudIcon Icon="@Icons.Material.Outlined.Nightlight" Size="Size.Small" />
+                    <span>Tokyo Night</span>
+                </MudStack>
+            </MudSelectItem>
+        </MudSelect>
+    </MudAppBar>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var saved = await JS.InvokeAsync<string?>("localStorage.getItem", "app-theme");
+        if (Enum.TryParse<AppTheme>(saved, out var theme) && theme != ThemeService.Current)
+        {
+            ThemeService.Set(theme);
+            StateHasChanged();
+        }
+
+        ThemeService.OnChange += StateHasChanged;
+    }
+
+    private async Task OnThemeChanged(AppTheme theme)
+    {
+        ThemeService.Set(theme);
+        await JS.InvokeVoidAsync("localStorage.setItem", "app-theme", theme.ToString());
+    }
+
+    public void Dispose() => ThemeService.OnChange -= StateHasChanged;
+}

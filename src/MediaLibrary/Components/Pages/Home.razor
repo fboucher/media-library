@@ -1,0 +1,207 @@
+@page "/"
+@rendermode InteractiveServer
+@using MediaLibrary.Data
+@using MediaLibrary.Models
+@using MediaLibrary.Services
+@inject MediaRepository MediaRepo
+@inject ConnectionRepository ConnectionRepo
+@inject SettingsRepository SettingsRepo
+@inject ThumbnailService Thumbnails
+@inject AppState AppState
+@inject IConfiguration Config
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>Media Library</PageTitle>
+
+<div class="home-layout">
+
+    <!-- Left column: connection bar + prompt + grid -->
+    <div class="home-left pa-4">
+
+        <!-- Connection bar -->
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+            <MudSelect T="int?" Value="_activeConnectionId"
+                       ValueChanged="OnConnectionChanged"
+                       Label="Connection"
+                       Variant="Variant.Outlined"
+                       Margin="Margin.Dense"
+                       Style="max-width:320px"
+                       Placeholder="No connection selected">
+                @foreach (var c in _connections)
+                {
+                    <MudSelectItem T="int?" Value="@((int?)c.Id)">@c.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudButton Variant="Variant.Text" Href="/connections">Edit</MudButton>
+        </MudStack>
+
+        <!-- Prompt -->
+        <MudTextField @bind-Value="_prompt"
+                      Label="Prompt"
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Style="max-width:480px"
+                      Class="mb-4"
+                      @onblur="SavePromptAsync" />
+
+        <!-- Media grid -->
+        <MediaGrid Items="_media"
+                   SelectedId="AppState.SelectedMedia?.Id"
+                   OnSelect="OnItemSelected" />
+
+        <div class="pa-3">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenFilePicker"
+                       Disabled="_uploading">
+                @(_uploading ? "Uploading…" : "Add Media")
+            </MudButton>
+        </div>
+
+        <InputFile id="fileInput" OnChange="OnFileSelected" accept="image/*,video/*" style="display:none" />
+    </div>
+
+    <!-- Right column: metadata panel, full height -->
+    <div class="home-right">
+        <MetadataPanel Item="AppState.SelectedMedia"
+                       OnSaved="OnMediaSaved"
+                       OnDeleted="OnMediaDeleted" />
+    </div>
+
+</div>
+
+@code {
+    private List<MediaItem> _media = [];
+    private List<Connection> _connections = [];
+    private int? _activeConnectionId;
+    private string _prompt = "";
+    private bool _uploading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _media       = (await MediaRepo.GetAllAsync()).ToList();
+        _connections = (await ConnectionRepo.GetAllAsync()).ToList();
+
+        _prompt = await SettingsRepo.GetAsync("prompt") ?? "Describe this media in 2-3 sentences.";
+        AppState.SetPrompt(_prompt);
+
+        var idStr = await SettingsRepo.GetAsync("active_connection_id");
+        if (int.TryParse(idStr, out var id))
+        {
+            _activeConnectionId = id;
+            AppState.SetActiveConnection(_connections.FirstOrDefault(c => c.Id == id));
+        }
+    }
+
+    private async Task OnConnectionChanged(int? id)
+    {
+        _activeConnectionId = id;
+        AppState.SetActiveConnection(id.HasValue ? _connections.FirstOrDefault(c => c.Id == id) : null);
+        await SettingsRepo.SetAsync("active_connection_id", id?.ToString() ?? "");
+    }
+
+    private async Task SavePromptAsync()
+    {
+        AppState.SetPrompt(_prompt);
+        await SettingsRepo.SetAsync("prompt", _prompt);
+    }
+
+    private async Task OnItemSelected(MediaItem item)
+    {
+        AppState.SelectMedia(item);
+    }
+
+    private async Task OpenFilePicker()
+    {
+        await JS.InvokeVoidAsync("eval", "document.getElementById('fileInput').click()");
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        _uploading = true;
+        StateHasChanged();
+        try
+        {
+            await UploadFile(e.File);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Upload failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _uploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task UploadFile(IBrowserFile file)
+    {
+        var mediaRoot = Config["Media:StoragePath"] ?? "/data/media";
+        Directory.CreateDirectory(mediaRoot);
+
+        var extension  = Path.GetExtension(file.Name).ToLowerInvariant();
+        var storedName = MakeUniqueFileName(mediaRoot, file.Name);
+        var filePath   = Path.Combine(mediaRoot, storedName);
+        var mediaType  = IsVideo(extension) ? "video" : "image";
+
+        await using (var stream = file.OpenReadStream(maxAllowedSize: 500 * 1024 * 1024))
+        await using (var dest = File.Create(filePath))
+        {
+            await stream.CopyToAsync(dest);
+        }
+
+        var item = new MediaItem
+        {
+            FileName    = storedName,
+            FileSize    = file.Size,
+            MediaType   = mediaType,
+            CreatedAt   = DateTime.UtcNow,
+            Description = ""
+        };
+
+        var id = await MediaRepo.InsertAsync(item);
+        item.Id = id;
+
+        if (mediaType == "video")
+        {
+            var thumbPath = await Thumbnails.ExtractAsync(filePath, id);
+            if (thumbPath is not null)
+            {
+                item.ThumbnailPath = thumbPath;
+                await MediaRepo.UpdateThumbnailAsync(id, thumbPath);
+            }
+        }
+
+        _media.Insert(0, item);
+        AppState.SelectMedia(item);
+    }
+
+    private void OnMediaSaved(MediaItem item)
+    {
+        var idx = _media.FindIndex(m => m.Id == item.Id);
+        if (idx >= 0) _media[idx] = item;
+    }
+
+    private void OnMediaDeleted(MediaItem item)
+    {
+        _media.RemoveAll(m => m.Id == item.Id);
+        AppState.SelectMedia(null);
+    }
+
+    private static string MakeUniqueFileName(string dir, string originalName)
+    {
+        var name      = Path.GetFileNameWithoutExtension(originalName);
+        var extension = Path.GetExtension(originalName);
+        var candidate = originalName;
+        var counter   = 1;
+        while (File.Exists(Path.Combine(dir, candidate)))
+            candidate = $"{name}_{counter++}{extension}";
+        return candidate;
+    }
+
+    private static bool IsVideo(string extension) =>
+        extension is ".mp4" or ".avi" or ".mov" or ".mkv" or ".webm" or ".wmv" or ".flv" or ".m4v";
+}

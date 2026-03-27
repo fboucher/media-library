@@ -1,0 +1,14 @@
+services:
+  media-library:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - media-data:/data
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - Database__Path=/data/media-library.db
+      - Media__StoragePath=/data/media
+
+volumes:
+  media-data:

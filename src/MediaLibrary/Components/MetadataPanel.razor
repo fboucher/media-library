@@ -6,13 +6,44 @@
 @inject AppState AppState
 @inject ISnackbar Snackbar
 @inject IConfiguration Config
+@inject DetectionRepository DetectionRepo
+@inject IJSRuntime JS
 
 @if (Item is not null)
 {
-    <MudPaper Class="pa-0" Elevation="0">
+    <div>
 
-        <img src="@Item.ThumbnailUrl" alt="@Item.FileName"
-             style="width:100%;max-height:240px;object-fit:contain;border-radius:4px;margin-bottom:16px;background:#f5f5f5" />
+        <div style="position:relative;width:100%;max-height:240px;margin-bottom:16px;background:var(--mud-palette-background-grey);border-radius:4px;overflow:hidden;cursor:pointer"
+             @onclick="OpenLightbox">
+            <img @ref="_imgRef"
+                 src="@Item.ThumbnailUrl"
+                 alt="@Item.FileName"
+                 style="width:100%;max-height:240px;object-fit:contain;display:block;border-radius:4px" />
+            <svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none">
+                @((MarkupString)BuildSvgContent())
+            </svg>
+        </div>
+
+        @if (_lightboxOpen)
+        {
+            <div style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9000;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center"
+                 @onclick="CloseLightbox">
+                <div style="position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center"
+                     @onclick:stopPropagation>
+                    <img @ref="_lightboxImgRef"
+                         src="@Item.ThumbnailUrl"
+                         alt="@Item.FileName"
+                         @onload="OnLightboxImageLoaded"
+                         style="max-width:100%;max-height:100%;object-fit:contain;display:block" />
+                    <svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none">
+                        @((MarkupString)BuildLightboxSvgContent())
+                    </svg>
+                </div>
+                <MudIconButton Icon="@Icons.Material.Filled.Close"
+                               Style="position:absolute;top:16px;right:16px;color:white"
+                               OnClick="CloseLightbox" />
+            </div>
+        }
 
         <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-1">File name</MudText>
         <MudText Typo="Typo.body1" Class="mb-3" Style="word-break:break-all">@Item.FileName</MudText>
@@ -46,6 +77,27 @@
             </MudButton>
         </MudStack>
 
+        @if (!Item!.IsVideo)
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-2">
+                <MudTextField @bind-Value="_detectWord"
+                              Placeholder="Detect objects…"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Style="flex:1" />
+                <MudButton Variant="Variant.Outlined"
+                           OnClick="DetectAsync"
+                           Disabled="@(AppState.ActiveConnection is null || _detecting || string.IsNullOrWhiteSpace(_detectWord))">
+                    @(_detecting ? "Detecting…" : "Detect")
+                </MudButton>
+            </MudStack>
+
+            @if (_detectError is not null)
+            {
+                <MudAlert Severity="Severity.Error" Class="mb-2" Dense="true">@_detectError</MudAlert>
+            }
+        }
+
         @if (_confirmingDelete)
         {
             <MudAlert Severity="Severity.Warning" Class="mt-2">
@@ -66,7 +118,22 @@
             </MudButton>
         }
 
-    </MudPaper>
+        @if (_detections.Count > 0)
+        {
+            <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mt-3 mb-1">Detection history</MudText>
+            <div style="max-height:128px;overflow-y:auto;border:1px solid var(--mud-palette-divider);border-radius:4px">
+                @foreach (var d in _detections)
+                {
+                    <div style="padding:6px 10px;cursor:pointer;@(_activeDetection?.Id == d.Id ? "background:var(--mud-palette-action-default-hover)" : "")"
+                         title="@d.CreatedAt.ToLocalTime().ToString("g")"
+                         @onclick="async () => await SelectDetection(d)">
+                        <MudText Typo="Typo.body2">@d.ResearchWord</MudText>
+                    </div>
+                }
+            </div>
+        }
+
+    </div>
 }
 
 @code {
@@ -79,11 +146,186 @@
     private bool _aiLoading;
     private string? _aiError;
 
-    protected override void OnParametersSet()
+    private List<Detection> _detections = [];
+    private Detection? _activeDetection;
+    private string _detectWord = "";
+    private bool _detecting;
+    private string? _detectError;
+
+    private ElementReference _imgRef;
+    private List<SvgBox> _svgBoxes = [];
+
+    private bool _lightboxOpen;
+    private ElementReference _lightboxImgRef;
+    private List<SvgBox> _lightboxSvgBoxes = [];
+    private List<DetectedObject> _currentObjects = [];
+
+    private record SvgBox(double X, double Y, double W, double H, string Label);
+
+    private string BuildSvgContent()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var box in _svgBoxes)
+        {
+            var label = System.Net.WebUtility.HtmlEncode(box.Label);
+            sb.Append($"<rect x='{box.X:F1}' y='{box.Y:F1}' width='{box.W:F1}' height='{box.H:F1}' fill='none' stroke='red' stroke-width='2'/>");
+            sb.Append($"<text x='{(box.X + 2):F1}' y='{(box.Y + 14):F1}' fill='red' font-size='11' font-family='sans-serif' style='text-shadow:0 0 3px #000'>{label}</text>");
+        }
+        return sb.ToString();
+    }
+
+    protected override async Task OnParametersSetAsync()
     {
         _description      = Item?.Description ?? "";
         _confirmingDelete = false;
         _aiError          = null;
+        _activeDetection  = null;
+        _detectWord       = "";
+        _detectError      = null;
+        _svgBoxes         = [];
+        _lightboxOpen     = false;
+        _lightboxSvgBoxes = [];
+        _currentObjects   = [];
+
+        if (Item is not null)
+            _detections = (await DetectionRepo.GetByMediaIdAsync(Item.Id)).ToList();
+        else
+            _detections = [];
+    }
+
+    private async Task SelectDetection(Detection d)
+    {
+        _activeDetection = d;
+        await DrawDetectionAsync(d);
+    }
+
+    private async Task DrawDetectionAsync(Detection d)
+    {
+        var objects = System.Text.Json.JsonSerializer.Deserialize<List<DetectedObject>>(d.DetectedJson) ?? [];
+        await DrawObjectsAsync(objects);
+    }
+
+    private async Task DrawObjectsAsync(List<DetectedObject> objects)
+    {
+        _currentObjects = objects;
+        _svgBoxes = [];
+
+        var bounds = await JS.InvokeAsync<ImageBounds?>("getImageRenderBounds", _imgRef);
+        if (bounds is null || bounds.Width == 0 || bounds.Height == 0) return;
+
+        foreach (var obj in objects)
+        {
+            foreach (var bboxStr in obj.Bboxes)
+            {
+                var parts = bboxStr.Split(',');
+                if (parts.Length != 4) continue;
+                if (!double.TryParse(parts[0], out var x1) || !double.TryParse(parts[1], out var y1) ||
+                    !double.TryParse(parts[2], out var x2) || !double.TryParse(parts[3], out var y2))
+                    continue;
+
+                var px = bounds.Left + x1 / 100.0 * bounds.Width;
+                var py = bounds.Top  + y1 / 100.0 * bounds.Height;
+                var pw = (x2 - x1) / 100.0 * bounds.Width;
+                var ph = (y2 - y1) / 100.0 * bounds.Height;
+
+                _svgBoxes.Add(new SvgBox(px, py, pw, ph, obj.Ref));
+            }
+        }
+    }
+
+    private void OpenLightbox()
+    {
+        _lightboxOpen     = true;
+        _lightboxSvgBoxes = [];
+    }
+
+    private void CloseLightbox() => _lightboxOpen = false;
+
+    private async Task OnLightboxImageLoaded()
+    {
+        _lightboxSvgBoxes = [];
+        if (_currentObjects.Count == 0) return;
+
+        var bounds = await JS.InvokeAsync<ImageBounds?>("getImageRenderBounds", _lightboxImgRef);
+        if (bounds is null || bounds.Width == 0 || bounds.Height == 0) return;
+
+        foreach (var obj in _currentObjects)
+        {
+            foreach (var bboxStr in obj.Bboxes)
+            {
+                var parts = bboxStr.Split(',');
+                if (parts.Length != 4) continue;
+                if (!double.TryParse(parts[0], out var x1) || !double.TryParse(parts[1], out var y1) ||
+                    !double.TryParse(parts[2], out var x2) || !double.TryParse(parts[3], out var y2))
+                    continue;
+
+                var px = bounds.Left + x1 / 100.0 * bounds.Width;
+                var py = bounds.Top  + y1 / 100.0 * bounds.Height;
+                var pw = (x2 - x1) / 100.0 * bounds.Width;
+                var ph = (y2 - y1) / 100.0 * bounds.Height;
+
+                _lightboxSvgBoxes.Add(new SvgBox(px, py, pw, ph, obj.Ref));
+            }
+        }
+    }
+
+    private string BuildLightboxSvgContent()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var box in _lightboxSvgBoxes)
+        {
+            var label = System.Net.WebUtility.HtmlEncode(box.Label);
+            sb.Append($"<rect x='{box.X:F1}' y='{box.Y:F1}' width='{box.W:F1}' height='{box.H:F1}' fill='none' stroke='red' stroke-width='3'/>");
+            sb.Append($"<text x='{(box.X + 3):F1}' y='{(box.Y + 18):F1}' fill='red' font-size='14' font-family='sans-serif' style='text-shadow:0 0 4px #000'>{label}</text>");
+        }
+        return sb.ToString();
+    }
+
+    private class ImageBounds
+    {
+        public double Left   { get; set; }
+        public double Top    { get; set; }
+        public double Width  { get; set; }
+        public double Height { get; set; }
+    }
+
+    private async Task DetectAsync()
+    {
+        if (Item is null || AppState.ActiveConnection is null) return;
+
+        _detecting   = true;
+        _detectError = null;
+
+        try
+        {
+            var objects = await AiService.DetectAsync(AppState.ActiveConnection, _detectWord, Item);
+
+            if (objects.Count == 0)
+            {
+                Snackbar.Add("Nothing detected.", Severity.Info);
+                return;
+            }
+
+            var detection = new Detection
+            {
+                MediaId      = Item.Id,
+                ResearchWord = _detectWord,
+                DetectedJson = System.Text.Json.JsonSerializer.Serialize(objects),
+                CreatedAt    = DateTime.UtcNow
+            };
+            detection.Id = await DetectionRepo.InsertAsync(detection);
+            _detections.Insert(0, detection);
+            _activeDetection = detection;
+            await DrawObjectsAsync(objects);
+        }
+        catch (Exception ex)
+        {
+            _detectError = ex.Message;
+        }
+        finally
+        {
+            _detecting = false;
+        }
     }
 
     private async Task SaveAsync()

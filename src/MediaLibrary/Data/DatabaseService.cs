@@ -62,5 +62,15 @@ public class DatabaseService
             INSERT OR IGNORE INTO settings (key, value)
             VALUES ('active_connection_id', '')
             """);
+
+        conn.Execute("""
+            CREATE TABLE IF NOT EXISTS detections (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                media_id       INTEGER NOT NULL,
+                research_word  TEXT    NOT NULL,
+                detected_json  TEXT    NOT NULL,
+                created_at     TEXT    NOT NULL
+            )
+            """);
     }
 }

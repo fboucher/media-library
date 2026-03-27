@@ -14,6 +14,7 @@ builder.Services.AddSingleton<DatabaseService>();
 builder.Services.AddScoped<MediaRepository>();
 builder.Services.AddScoped<ConnectionRepository>();
 builder.Services.AddScoped<SettingsRepository>();
+builder.Services.AddScoped<DetectionRepository>();
 builder.Services.AddScoped<ThumbnailService>();
 builder.Services.AddScoped<AiService>();
 builder.Services.AddScoped<AppState>();

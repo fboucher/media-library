@@ -5,7 +5,7 @@ COPY src/MediaLibrary/MediaLibrary.csproj src/MediaLibrary/
 RUN dotnet restore src/MediaLibrary/MediaLibrary.csproj
 
 COPY src/MediaLibrary/ src/MediaLibrary/
-RUN dotnet publish src/MediaLibrary/MediaLibrary.csproj -c Release -o /app --no-restore
+RUN dotnet publish src/MediaLibrary/MediaLibrary.csproj -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app

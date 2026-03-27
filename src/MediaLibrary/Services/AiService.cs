@@ -100,6 +100,106 @@ public class AiService(IHttpClientFactory httpFactory, IConfiguration config, IL
         return trimmed + "/chat/completions";
     }
 
+    public async Task<List<DetectedObject>> DetectAsync(Connection connection, string researchWord, MediaItem item)
+    {
+        var client = httpFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", connection.ApiKey);
+
+        var contentBlock = await BuildImageBlockAsync(item);
+
+        var body = new
+        {
+            model    = connection.Model,
+            messages = new[]
+            {
+                new
+                {
+                    role    = "user",
+                    content = new object[]
+                    {
+                        contentBlock,
+                        new { type = "text", text = $"Detect: {researchWord}" }
+                    }
+                }
+            }
+        };
+
+        var url     = BuildEndpointUrl(connection.Url);
+        var json    = JsonSerializer.Serialize(body);
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+
+        var response = await client.SendAsync(request);
+        var raw      = await response.Content.ReadAsStringAsync();
+
+        logger.LogDebug("AI detect response: {Body}", raw);
+
+        string content;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("error", out var errorEl))
+            {
+                var msg = errorEl.TryGetProperty("message", out var m) ? m.GetString() : raw;
+                throw new InvalidOperationException(msg);
+            }
+
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"API error {(int)response.StatusCode}: {raw}");
+
+            content = root
+                .GetProperty("choices")[0]
+                .GetProperty("message")
+                .GetProperty("content")
+                .GetString() ?? "";
+        }
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to parse detect response: {Body}", raw);
+            throw new InvalidOperationException($"Unexpected response format: {raw}");
+        }
+
+        return ParseDetections(content);
+    }
+
+    private static List<DetectedObject> ParseDetections(string content)
+    {
+        // Truncate at first <sep> — model may hallucinate conversation after the structured block
+        var sepIndex = content.IndexOf("<sep>", StringComparison.Ordinal);
+        if (sepIndex >= 0)
+            content = content[..sepIndex];
+
+        var results = new List<DetectedObject>();
+        // Match pairs of <ref>label</ref><bbox>coords</bbox>
+        var refBboxPattern = new System.Text.RegularExpressions.Regex(
+            @"<ref>(.*?)</ref><bbox>(.*?)</bbox>",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        foreach (System.Text.RegularExpressions.Match match in refBboxPattern.Matches(content))
+        {
+            var label  = match.Groups[1].Value.Trim();
+            var bboxes = match.Groups[2].Value
+                .Split(';', StringSplitOptions.RemoveEmptyEntries)
+                .Select(b => b.Trim())
+                .Where(b => !string.IsNullOrEmpty(b))
+                .ToList();
+
+            if (!string.IsNullOrEmpty(label) && bboxes.Count > 0)
+                results.Add(new DetectedObject { Ref = label, Bboxes = bboxes });
+        }
+
+        return results;
+    }
+
     private async Task<object> BuildVideoBlockAsync(MediaItem item)
     {
         var mediaRoot = config["Media:StoragePath"] ?? "/data/media";

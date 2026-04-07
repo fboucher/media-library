@@ -16,13 +16,16 @@ or if you have .NET 10 installed:
 dotnet run --project src/MediaLibrary
 ```
 
-
 Open [http://localhost:8080](http://localhost:8080).
 Media files and the database are persisted in a named volume (`media-data`) so they survive container restarts.
 
 ## How it works
 
 See [docs/how-it-works.md](docs/how-it-works.md) for a full walkthrough of the app.
+
+## Example / Tutorial
+
+Coming up soon...
 
 ## Technologies
 

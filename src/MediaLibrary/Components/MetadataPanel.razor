@@ -96,6 +96,12 @@
             {
                 <MudAlert Severity="Severity.Error" Class="mb-2" Dense="true">@_detectError</MudAlert>
             }
+
+            @if (_detectRawText is not null)
+            {
+                <MudAlert Severity="Severity.Info" Class="mb-2" Dense="true"
+                          ShowCloseIcon="true" CloseIconClicked="() => _detectRawText = null">@StripMarkdown(_detectRawText)</MudAlert>
+            }
         }
 
         @if (_confirmingDelete)
@@ -151,6 +157,7 @@
     private string _detectWord = "";
     private bool _detecting;
     private string? _detectError;
+    private string? _detectRawText;
 
     private ElementReference _imgRef;
     private List<SvgBox> _svgBoxes = [];
@@ -182,6 +189,7 @@
         _activeDetection  = null;
         _detectWord       = "";
         _detectError      = null;
+        _detectRawText    = null;
         _svgBoxes         = [];
         _lightboxOpen     = false;
         _lightboxSvgBoxes = [];
@@ -281,6 +289,16 @@
         return sb.ToString();
     }
 
+    private static string StripMarkdown(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        var s = System.Text.RegularExpressions.Regex.Replace(text, @"\*{1,3}(.*?)\*{1,3}", "$1");
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"_{1,2}(.*?)_{1,2}", "$1");
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"^[\*\-\+]\s+", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"^\s*#+\s+", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+        return s.Trim();
+    }
+
     private class ImageBounds
     {
         public double Left   { get; set; }
@@ -293,16 +311,19 @@
     {
         if (Item is null || AppState.ActiveConnection is null) return;
 
-        _detecting   = true;
-        _detectError = null;
+        _detecting      = true;
+        _detectError    = null;
+        _detectRawText  = null;
 
         try
         {
-            var objects = await AiService.DetectAsync(AppState.ActiveConnection, _detectWord, Item);
+            var (objects, rawText) = await AiService.DetectAsync(AppState.ActiveConnection, _detectWord, Item);
 
             if (objects.Count == 0)
             {
                 Snackbar.Add("Nothing detected.", Severity.Info);
+                if (!string.IsNullOrWhiteSpace(rawText))
+                    _detectRawText = rawText;
                 return;
             }
 

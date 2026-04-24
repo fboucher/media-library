@@ -103,7 +103,7 @@ public partial class AiService(IHttpClientFactory httpFactory, IConfiguration co
         return trimmed + "/chat/completions";
     }
 
-    public async Task<List<DetectedObject>> DetectAsync(Connection connection, string researchWord, MediaItem item)
+    public async Task<(List<DetectedObject> Objects, string RawText)> DetectAsync(Connection connection, string researchWord, MediaItem item)
     {
         var client = httpFactory.CreateClient();
         client.DefaultRequestHeaders.Authorization =
@@ -171,7 +171,7 @@ public partial class AiService(IHttpClientFactory httpFactory, IConfiguration co
             throw new InvalidOperationException($"Unexpected response format: {raw}");
         }
 
-        return ParseDetections(content);
+        return (ParseDetections(content), content);
     }
 
     private static List<DetectedObject> ParseDetections(string content)

@@ -176,6 +176,10 @@ public partial class AiService(IHttpClientFactory httpFactory, IConfiguration co
 
     private static List<DetectedObject> ParseDetections(string content)
     {
+        var box2d = TryParseBox2d(content);
+        if (box2d is not null)
+            return box2d;
+
         // Truncate at first <sep> — model may hallucinate conversation after the structured block
         var sepIndex = content.IndexOf("<sep>", StringComparison.Ordinal);
         if (sepIndex >= 0)
@@ -201,6 +205,56 @@ public partial class AiService(IHttpClientFactory httpFactory, IConfiguration co
         }
 
         return results;
+    }
+
+    // Parses Gemini-style box_2d JSON: [{"box_2d":[ymin,xmin,ymax,xmax],"label":"..."}]
+    // Coordinates are in 0–1000 range; converts to "x1,y1,x2,y2" in 0–100 for the existing renderer.
+    private static List<DetectedObject>? TryParseBox2d(string content)
+    {
+        var json = ExtractJsonArray(content);
+        if (json is null) return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Array) return null;
+
+            var results = new List<DetectedObject>();
+            foreach (var el in root.EnumerateArray())
+            {
+                if (!el.TryGetProperty("box_2d", out var boxEl) || boxEl.ValueKind != JsonValueKind.Array)
+                    return null;
+
+                var coords = boxEl.EnumerateArray().Select(c => c.GetDouble()).ToList();
+                if (coords.Count != 4) continue;
+
+                // [ymin, xmin, ymax, xmax] → "x1,y1,x2,y2" as percentages
+                var bboxStr = $"{coords[1]/10:F2},{coords[0]/10:F2},{coords[3]/10:F2},{coords[2]/10:F2}";
+                var label   = el.TryGetProperty("label", out var labelEl) ? labelEl.GetString() ?? "" : "";
+
+                results.Add(new DetectedObject { Ref = label, Bboxes = [bboxStr] });
+            }
+
+            return results.Count > 0 ? results : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ExtractJsonArray(string content)
+    {
+        var fenceMatch = JsonFencePattern.Match(content);
+        if (fenceMatch.Success)
+            return fenceMatch.Groups[1].Value;
+
+        var trimmed = content.Trim();
+        if (trimmed.StartsWith('['))
+            return trimmed;
+
+        return null;
     }
 
     private async Task<object> BuildVideoBlockAsync(MediaItem item)
@@ -250,5 +304,6 @@ public partial class AiService(IHttpClientFactory httpFactory, IConfiguration co
         };
     }
 
-    private static readonly Regex MultipleNewlines = new(@"(\r?\n){2,}", RegexOptions.Compiled);
+    private static readonly Regex JsonFencePattern  = new(@"```(?:json)?\s*(\[[\s\S]*?\])\s*```", RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex MultipleNewlines  = new(@"(\r?\n){2,}", RegexOptions.Compiled);
 }

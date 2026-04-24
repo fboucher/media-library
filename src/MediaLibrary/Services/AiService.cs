@@ -1,11 +1,12 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MediaLibrary.Models;
 
 namespace MediaLibrary.Services;
 
-public class AiService(IHttpClientFactory httpFactory, IConfiguration config, ILogger<AiService> logger)
+public partial class AiService(IHttpClientFactory httpFactory, IConfiguration config, ILogger<AiService> logger)
 {
     public async Task<string> AnalyzeAsync(Connection connection, string prompt, MediaItem item)
     {
@@ -86,7 +87,9 @@ public class AiService(IHttpClientFactory httpFactory, IConfiguration config, IL
 
     private static string ExtractFirstParagraph(string text)
     {
-        // Split on blank lines, return the first non-empty block
+        if (text.Length <= 350)
+            return MultipleNewlines.Replace(text.Trim(), "\n");
+
         var paragraphs = text.Split(["\r\n\r\n", "\n\n"], StringSplitOptions.RemoveEmptyEntries);
         return paragraphs.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p))?.Trim() ?? text.Trim();
     }
@@ -246,4 +249,6 @@ public class AiService(IHttpClientFactory httpFactory, IConfiguration config, IL
             image_url = new { url = $"data:{mimeType};base64,{base64}" }
         };
     }
+
+    private static readonly Regex MultipleNewlines = new(@"(\r?\n){2,}", RegexOptions.Compiled);
 }
